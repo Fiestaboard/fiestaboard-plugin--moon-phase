@@ -1,0 +1,69 @@
+{
+  "id": "moon_phase",
+  "name": "Moon Phase",
+  "version": "0.1.0",
+  "description": "Display the current moon phase and illumination percentage.",
+  "author": "FiestaBoard Team",
+  "icon": "moon",
+  "category": "data",
+  "repository": "https://github.com/Fiestaboard/fiestaboard-plugin--moon-phase",
+  "documentation": "README.md",
+  "min_refresh_seconds": 3600,
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "title": "Enabled",
+        "default": false
+      },
+      "refresh_seconds": {
+        "type": "integer",
+        "title": "Refresh Interval (seconds)",
+        "description": "How often to fetch moon phase data.",
+        "default": 3600,
+        "minimum": 3600
+      }
+    },
+    "required": []
+  },
+  "variables": {
+    "groups": {
+      "phase": {
+        "label": "Phase"
+      }
+    },
+    "simple": {
+      "phase": {
+        "description": "Current moon phase name",
+        "type": "string",
+        "max_length": 20,
+        "group": "phase",
+        "example": "Waxing Crescent"
+      },
+      "illumination": {
+        "description": "Percentage of illumination (0-100)",
+        "type": "number",
+        "max_length": 5,
+        "group": "phase",
+        "example": "42.5"
+      },
+      "next_full_moon": {
+        "description": "Date of next full moon (YYYY-MM-DD)",
+        "type": "string",
+        "max_length": 12,
+        "group": "phase",
+        "example": "2026-05-12"
+      }
+    }
+  },
+  "screenshots": [
+    {
+      "src": "docs/board-display.png",
+      "alt": "Moon Phase displayed on a Vestaboard",
+      "caption": "Example board output using the default template",
+      "primary": true
+    }
+  ],
+  "api_docs": "https://aa.usno.navy.mil/data/api"
+}
