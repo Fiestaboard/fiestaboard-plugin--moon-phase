@@ -37,17 +37,20 @@ MANIFEST = json.loads("""
 }
 """)
 
-# Six phases starting ~30 days before 2026-05-09, bracketing that date correctly.
-# Last Quarter on Apr 28 (past) + New Moon on May 10 (future) → Waning Crescent on May 9.
+# Seven phases from 35 days before 2026-05-09 (= 2026-04-04), nump=7.
+# Last Quarter on May 8 at 23:00 UT simulates a UTC-offset case: the event
+# falls on May 9 in the user's local timezone but USNO records it as May 8.
+# New Moon on Apr 17 anchors the cosine illumination formula.
 SAMPLE_RESPONSE = json.loads("""
 {
     "phasedata": [
-        {"phase": "First Quarter", "year": 2026, "month": 4, "day": 13, "time": "09:00"},
-        {"phase": "Full Moon",     "year": 2026, "month": 4, "day": 20, "time": "12:00"},
-        {"phase": "Last Quarter",  "year": 2026, "month": 4, "day": 28, "time": "09:00"},
-        {"phase": "New Moon",      "year": 2026, "month": 5, "day": 10, "time": "06:00"},
-        {"phase": "First Quarter", "year": 2026, "month": 5, "day": 17, "time": "09:00"},
-        {"phase": "Full Moon",     "year": 2026, "month": 5, "day": 25, "time": "12:00"}
+        {"phase": "New Moon",      "year": 2026, "month": 4, "day": 17, "time": "12:00"},
+        {"phase": "First Quarter", "year": 2026, "month": 4, "day": 24, "time": "09:00"},
+        {"phase": "Full Moon",     "year": 2026, "month": 5, "day":  1, "time": "12:00"},
+        {"phase": "Last Quarter",  "year": 2026, "month": 5, "day":  8, "time": "23:00"},
+        {"phase": "New Moon",      "year": 2026, "month": 5, "day": 16, "time": "06:00"},
+        {"phase": "First Quarter", "year": 2026, "month": 5, "day": 23, "time": "09:00"},
+        {"phase": "Full Moon",     "year": 2026, "month": 5, "day": 30, "time": "12:00"}
     ]
 }
 """)
@@ -97,10 +100,13 @@ class TestMoonPhasePlugin:
 
     @patch("plugins.moon_phase.requests.get")
     @patch("plugins.moon_phase.datetime")
-    def test_phase_waning_crescent_before_new_moon(self, mock_dt, mock_get, configured_plugin):
-        """Regression: issue #727 — day before New Moon must not report 'New Moon, 0%'."""
+    def test_phase_last_quarter_with_usno_utc_offset(self, mock_dt, mock_get, configured_plugin):
+        """Regression: issue #727 — USNO UTC date one day behind local date must still
+        report the quarter-phase name, not the between-phase name."""
         import datetime as real_datetime
-        # Pin today to May 9, 2026 (the date in the bug report)
+        # Pin today to May 9, 2026 (the date in the bug report).
+        # SAMPLE_RESPONSE has Last Quarter on May 8 at 23:00 UT, which is May 9
+        # in many western timezones — the ±1-day tolerance must catch this.
         mock_dt.date.today.return_value = real_datetime.date(2026, 5, 9)
         mock_dt.date.side_effect = lambda *a, **kw: real_datetime.date(*a, **kw)
         mock_dt.timedelta = real_datetime.timedelta
@@ -113,10 +119,10 @@ class TestMoonPhasePlugin:
         result = configured_plugin.fetch_data()
 
         assert result.available is True
-        assert result.data["phase"] == "Waning Crescent"
-        # Last Quarter (50%) → New Moon (0%) over 12 days; on day 11 → ~4%
-        assert result.data["illumination"] < 15
-        assert result.data["next_full_moon"] == "2026-05-25"
+        assert result.data["phase"] == "Last Quarter"
+        # cos formula: 22 days since New Moon Apr 17 → ~52%, close to real 51%
+        assert 45 <= result.data["illumination"] <= 55
+        assert result.data["next_full_moon"] == "2026-05-30"
 
     @patch("plugins.moon_phase.requests.get")
     def test_fetch_data_network_error(self, mock_get, configured_plugin):

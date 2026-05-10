@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import math
 import logging
 from typing import Any, Dict, List
 import requests
@@ -22,14 +23,6 @@ _BETWEEN_PHASE = {
     ("Last Quarter", "New Moon"): "Waning Crescent",
 }
 
-# Illumination (%) at each quarter-phase boundary
-_QUARTER_ILLUMINATION = {
-    "New Moon": 0,
-    "First Quarter": 50,
-    "Full Moon": 100,
-    "Last Quarter": 50,
-}
-
 
 class MoonPhasePlugin(PluginBase):
     """Moon Phase plugin for FiestaBoard."""
@@ -41,11 +34,13 @@ class MoonPhasePlugin(PluginBase):
     def fetch_data(self) -> PluginResult:
         try:
             today = datetime.date.today()
-            # Start 30 days ago so the window brackets today with past and future events
-            start_date = today - datetime.timedelta(days=30)
+            # Start 35 days ago: guarantees the last New Moon (cycle = 29.53 days)
+            # is in the window so we can compute illumination accurately.
+            # nump=7 covers ~52 additional days, always including the next Full Moon.
+            start_date = today - datetime.timedelta(days=35)
             response = requests.get(
                 API_URL,
-                params={"date": start_date.strftime("%Y-%m-%d"), "nump": 6},
+                params={"date": start_date.strftime("%Y-%m-%d"), "nump": 7},
                 headers={"User-Agent": USER_AGENT},
                 timeout=10,
             )
@@ -62,25 +57,32 @@ class MoonPhasePlugin(PluginBase):
             last_phase = past[-1] if past else None
             next_phase = future[0] if future else None
 
+            # USNO reports dates in UT; a quarter event at 23:xx UT can land on
+            # "yesterday" even though it's already that calendar day in the user's
+            # local timezone. A ±1-day tolerance handles this without requiring
+            # knowledge of the user's timezone.
             current_phase = "Unknown"
-            illumination = 0
-
             if last_phase:
                 last_name = last_phase.get("phase", "")
-                last_date = entry_date(last_phase)
-                if last_date == today:
+                days_since_last = (today - entry_date(last_phase)).days
+                if days_since_last <= 1:
                     current_phase = last_name
-                    illumination = _QUARTER_ILLUMINATION.get(last_name, 0)
                 elif next_phase:
                     next_name = next_phase.get("phase", "")
-                    next_date = entry_date(next_phase)
                     current_phase = _BETWEEN_PHASE.get((last_name, next_name), "Unknown")
-                    days_total = (next_date - last_date).days
-                    days_elapsed = (today - last_date).days
-                    frac = days_elapsed / days_total if days_total else 0
-                    illum_start = _QUARTER_ILLUMINATION.get(last_name, 0)
-                    illum_end = _QUARTER_ILLUMINATION.get(next_name, 0)
-                    illumination = round(illum_start + frac * (illum_end - illum_start))
+
+            # Cosine formula gives accurate illumination from days since last New Moon.
+            last_new_moon = next(
+                (entry_date(e) for e in reversed(past) if e.get("phase") == "New Moon"),
+                None,
+            )
+            if last_new_moon:
+                days_into_cycle = (today - last_new_moon).days
+                illumination = round(
+                    (1 - math.cos(2 * math.pi * days_into_cycle / 29.53059)) / 2 * 100
+                )
+            else:
+                illumination = 0
 
             next_full = ""
             for entry in future:
