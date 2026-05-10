@@ -1,7 +1,7 @@
 {
   "id": "moon_phase",
   "name": "Moon Phase",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Display the current moon phase and illumination percentage.",
   "author": "FiestaBoard Team",
   "icon": "moon",
