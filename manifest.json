@@ -65,6 +65,28 @@
       "primary": true
     }
   ],
+  "teaser": "WAXING 42% LIT",
+  "previews": [
+    {
+      "device_type": "flagship",
+      "rows": [
+        "{63}{67}{65}{66}{64} MOON PHASE {64}{66}{65}{67}{63}",
+        "",
+        "   Waxing Crescent",
+        "  42.5% illuminated",
+        "",
+        " Full Moon 2026-05-12"
+      ]
+    },
+    {
+      "device_type": "note",
+      "rows": [
+        "{69}{69} MOON PHASE",
+        "WAXING CRESCENT",
+        "42.5% LIT"
+      ]
+    }
+  ],
   "api_docs": "https://aa.usno.navy.mil/data/api",
   "demo": {
     "flagship": {
