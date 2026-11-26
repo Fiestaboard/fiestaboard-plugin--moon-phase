@@ -37,7 +37,7 @@ MANIFEST = json.loads("""
 }
 """)
 
-# Seven phases from 35 days before 2026-05-09 (= 2026-04-04), nump=7.
+# Seven phases from 35 days before 2026-05-09 (= 2026-04-04).
 # Last Quarter on May 8 at 23:00 UT simulates a UTC-offset case: the event
 # falls on May 9 in the user's local timezone but USNO records it as May 8.
 # New Moon on Apr 17 anchors the cosine illumination formula.
@@ -145,3 +145,62 @@ class TestMoonPhasePlugin:
 
         assert result.available is False
 
+
+
+# Real USNO primary phases, 2026-09-04 .. 2026-12-30 (from
+# https://aa.usno.navy.mil/api/moon/phases/year?year=2026).
+_USNO_2026_PHASES = [
+    (9, 4, "Last Quarter"), (9, 11, "New Moon"), (9, 18, "First Quarter"),
+    (9, 26, "Full Moon"), (10, 3, "Last Quarter"), (10, 10, "New Moon"),
+    (10, 18, "First Quarter"), (10, 26, "Full Moon"), (11, 1, "Last Quarter"),
+    (11, 9, "New Moon"), (11, 17, "First Quarter"), (11, 24, "Full Moon"),
+    (12, 1, "Last Quarter"), (12, 9, "New Moon"), (12, 17, "First Quarter"),
+    (12, 24, "Full Moon"), (12, 30, "Last Quarter"),
+]
+
+
+def _fake_usno_get(url, params, **kwargs):
+    """Answer like USNO's /phases/date: the first `nump` phases on or after `date`."""
+    import datetime as real_datetime
+    start = real_datetime.date.fromisoformat(params["date"])
+    entries = [
+        {"phase": name, "year": 2026, "month": m, "day": d, "time": "12:00"}
+        for m, d, name in _USNO_2026_PHASES
+        if real_datetime.date(2026, m, d) >= start
+    ][: params["nump"]]
+    response = Mock()
+    response.json.return_value = {"phasedata": entries}
+    response.raise_for_status = Mock()
+    return response
+
+
+def _fetch_on(plugin, day):
+    import datetime as real_datetime
+    with patch("plugins.moon_phase.requests.get", side_effect=_fake_usno_get), \
+            patch("plugins.moon_phase.datetime") as mock_dt:
+        mock_dt.date.today.return_value = day
+        mock_dt.date.side_effect = lambda *a, **kw: real_datetime.date(*a, **kw)
+        mock_dt.timedelta = real_datetime.timedelta
+        return plugin.fetch_data()
+
+
+class TestNextFullMoon:
+
+    def test_next_full_moon_found_two_days_after_full_moon(self, configured_plugin):
+        """Regression: two days after the 2026-11-24 Full Moon the API window
+        ended before the next Full Moon, so next_full_moon came back blank."""
+        import datetime as real_datetime
+        result = _fetch_on(configured_plugin, real_datetime.date(2026, 11, 26))
+
+        assert result.available is True
+        assert result.data["next_full_moon"] == "2026-12-24"
+
+    def test_next_full_moon_never_blank_across_a_lunar_cycle(self, configured_plugin):
+        import datetime as real_datetime
+        first = real_datetime.date(2026, 10, 26)
+        for offset in range(30):
+            day = first + real_datetime.timedelta(days=offset)
+            result = _fetch_on(configured_plugin, day)
+            next_full = result.data["next_full_moon"]
+            assert next_full, f"next_full_moon blank on {day}"
+            assert real_datetime.date.fromisoformat(next_full) > day
