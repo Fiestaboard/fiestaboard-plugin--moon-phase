@@ -13,6 +13,7 @@ from src.plugins.base import PluginBase, PluginResult
 logger = logging.getLogger(__name__)
 
 API_URL = "https://aa.usno.navy.mil/api/moon/phases/date"
+NUM_PHASES = 12
 USER_AGENT = "FiestaBoard Moon Phase Plugin (https://github.com/Fiestaboard/fiestaboard-plugin--moon-phase)"
 
 # Phase name for the interval between two adjacent quarter events
@@ -36,11 +37,14 @@ class MoonPhasePlugin(PluginBase):
             today = datetime.date.today()
             # Start 35 days ago: guarantees the last New Moon (cycle = 29.53 days)
             # is in the window so we can compute illumination accurately.
-            # nump=7 covers ~52 additional days, always including the next Full Moon.
+            # Quarter events are ~7.4 days apart, so nump phases reach roughly
+            # 7.4 * (nump - 1) days past the first one. nump=12 reaches at least
+            # ~46 days past today, beyond the next Full Moon (at most 29.5 days
+            # away). nump=7 stopped short of it for ~2 weeks after every Full Moon.
             start_date = today - datetime.timedelta(days=35)
             response = requests.get(
                 API_URL,
-                params={"date": start_date.strftime("%Y-%m-%d"), "nump": 7},
+                params={"date": start_date.strftime("%Y-%m-%d"), "nump": NUM_PHASES},
                 headers={"User-Agent": USER_AGENT},
                 timeout=10,
             )
