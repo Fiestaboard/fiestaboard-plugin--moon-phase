@@ -1,7 +1,7 @@
 {
   "id": "moon_phase",
   "name": "Moon Phase",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Display the current moon phase and illumination percentage.",
   "author": "FiestaBoard Team",
   "icon": "moon",
@@ -87,7 +87,6 @@
       ]
     }
   ],
-  "api_docs": "https://aa.usno.navy.mil/data/api",
   "demo": {
     "flagship": {
       "name": "Moon Phase Demo",

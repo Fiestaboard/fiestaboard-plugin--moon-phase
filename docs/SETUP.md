@@ -4,9 +4,7 @@ Display the current moon phase and illumination percentage.
 
 ## Overview
 
-The Moon Phase plugin queries the US Naval Observatory API for lunar phase data. It shows the current phase name (New Moon, Waxing Crescent, etc.) and the percentage of the Moon that is illuminated. No API key is required.
-
-- API reference: https://aa.usno.navy.mil/data/api
+The Moon Phase plugin computes lunar phases on the device with standard astronomical formulas (Jean Meeus, *Astronomical Algorithms*), so it needs no internet connection and no API key. It shows the current phase name (New Moon, Waxing Crescent, etc.), the percentage of the Moon that is illuminated, and the date of the next full moon.
 
 ### Prerequisites
 
@@ -18,7 +16,8 @@ No API key or account required.
 2. **Configure** — Fill in the plugin settings (see Configuration Reference below).
 3. **Template** — Add a page using the `moon_phase` plugin variables:
    ```
-   {{{ moon_phase.status }}}
+   {{moon_phase.phase}}
+   {{moon_phase.illumination}}% LIT
    ```
 4. **View** — Navigate to your board page to see the live display.
 
@@ -39,6 +38,5 @@ No API key or account required.
 
 ## Troubleshooting
 
-- **No data** — verify the device can reach `aa.usno.navy.mil`.
-- **Wrong phase** — the plugin uses the next upcoming phase from the API.
+- **Phase name is a day off** — phase dates are computed in UTC. On the day after a quarter event, the plugin still shows that event's name, so users west of UTC see the right name on the local day.
 
