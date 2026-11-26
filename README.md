@@ -8,7 +8,7 @@ Display the current moon phase and illumination percentage.
 
 ## Overview
 
-The Moon Phase plugin queries the US Naval Observatory API for lunar phase data. It shows the current phase name (New Moon, Waxing Crescent, etc.) and the percentage of the Moon that is illuminated. No API key is required.
+The Moon Phase plugin computes lunar phases on the device with standard astronomical formulas (Jean Meeus, *Astronomical Algorithms*), so it needs no internet connection and no API key. It shows the current phase name (New Moon, Waxing Crescent, etc.), the percentage of the Moon that is illuminated, and the date of the next full moon.
 
 ## Template Variables
 
@@ -40,7 +40,7 @@ Next Full:
 - Current moon phase name
 - Illumination percentage
 - Next full moon date
-- No API key required
+- No API key or internet connection required
 
 ## Author
 

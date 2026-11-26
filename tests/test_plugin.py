@@ -2,58 +2,47 @@
 
 from __future__ import annotations
 
+import datetime
 import json
+import socket
 from pathlib import Path
-from unittest.mock import patch, Mock
+from unittest.mock import patch
 
 import pytest
 
+import plugins.moon_phase as moon
 from plugins.moon_phase import MoonPhasePlugin
-from src.plugins.base import PluginResult
+
+UTC = datetime.timezone.utc
 
 MANIFEST = json.loads("""
 {
     "id": "moon_phase",
     "name": "Moon Phase",
     "version": "0.1.0",
-    "settings_schema": {
-        "type": "object",
-        "properties": {
-            "enabled": {
-                "type": "boolean",
-                "title": "Enabled",
-                "default": false
-            },
-            "refresh_seconds": {
-                "type": "integer",
-                "title": "Refresh Interval (seconds)",
-                "description": "How often to fetch moon phase data.",
-                "default": 3600,
-                "minimum": 3600
-            }
-        },
-        "required": []
-    }
+    "settings_schema": {"type": "object", "properties": {}, "required": []}
 }
 """)
 
-# Seven phases from 35 days before 2026-05-09 (= 2026-04-04).
-# Last Quarter on May 8 at 23:00 UT simulates a UTC-offset case: the event
-# falls on May 9 in the user's local timezone but USNO records it as May 8.
-# New Moon on Apr 17 anchors the cosine illumination formula.
-SAMPLE_RESPONSE = json.loads("""
-{
-    "phasedata": [
-        {"phase": "New Moon",      "year": 2026, "month": 4, "day": 17, "time": "12:00"},
-        {"phase": "First Quarter", "year": 2026, "month": 4, "day": 24, "time": "09:00"},
-        {"phase": "Full Moon",     "year": 2026, "month": 5, "day":  1, "time": "12:00"},
-        {"phase": "Last Quarter",  "year": 2026, "month": 5, "day":  8, "time": "23:00"},
-        {"phase": "New Moon",      "year": 2026, "month": 5, "day": 16, "time": "06:00"},
-        {"phase": "First Quarter", "year": 2026, "month": 5, "day": 23, "time": "09:00"},
-        {"phase": "Full Moon",     "year": 2026, "month": 5, "day": 30, "time": "12:00"}
-    ]
-}
-""")
+# Real USNO primary phases (UT), from
+# https://aa.usno.navy.mil/api/moon/phases/year?year=2026
+USNO_2026 = [
+    ("2026-01-03 10:03", "Full Moon"), ("2026-01-10 15:48", "Last Quarter"),
+    ("2026-01-18 19:52", "New Moon"),
+    ("2026-09-04 07:51", "Last Quarter"), ("2026-09-11 03:27", "New Moon"),
+    ("2026-09-18 20:44", "First Quarter"), ("2026-09-26 16:49", "Full Moon"),
+    ("2026-10-03 13:25", "Last Quarter"), ("2026-10-10 15:50", "New Moon"),
+    ("2026-10-18 16:12", "First Quarter"), ("2026-10-26 04:12", "Full Moon"),
+    ("2026-11-01 20:28", "Last Quarter"), ("2026-11-09 07:02", "New Moon"),
+    ("2026-11-17 11:48", "First Quarter"), ("2026-11-24 14:53", "Full Moon"),
+    ("2026-12-01 06:08", "Last Quarter"), ("2026-12-09 00:52", "New Moon"),
+    ("2026-12-17 05:42", "First Quarter"), ("2026-12-24 01:28", "Full Moon"),
+    ("2026-12-30 18:59", "Last Quarter"),
+]
+
+
+def _utc(text: str) -> datetime.datetime:
+    return datetime.datetime.strptime(text, "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
 
 
 @pytest.fixture
@@ -61,146 +50,100 @@ def plugin():
     return MoonPhasePlugin(MANIFEST)
 
 
-@pytest.fixture
-def configured_plugin():
-    p = MoonPhasePlugin(MANIFEST)
-    p.config = json.loads("""
-{}
-""")
-    return p
+def _fetch_on(plugin, day: datetime.date, hour: int = 12):
+    now = datetime.datetime(day.year, day.month, day.day, hour, tzinfo=UTC)
+    with patch.object(moon, "_today", return_value=day), \
+            patch.object(moon, "_utcnow", return_value=now):
+        return plugin.fetch_data()
 
 
-class TestMoonPhasePlugin:
+class TestPhaseEvents:
+
+    @pytest.mark.parametrize("when,name", USNO_2026)
+    def test_phase_time_matches_usno_within_two_minutes(self, when, name):
+        expected = _utc(when)
+        events = moon.phase_events(expected.date(), expected.date())
+        assert [n for _, n in events] == [name]
+        assert abs((events[0][0] - expected).total_seconds()) <= 120
+
+    def test_year_2026_has_the_same_50_phases_usno_lists(self):
+        events = moon.phase_events(datetime.date(2026, 1, 1), datetime.date(2026, 12, 31))
+        assert len(events) == 50
+
+    def test_events_cycle_through_the_four_phases_in_order(self):
+        names = [n for _, n in moon.phase_events(datetime.date(2026, 1, 1),
+                                                 datetime.date(2026, 12, 31))]
+        order = ["New Moon", "First Quarter", "Full Moon", "Last Quarter"]
+        for prev, cur in zip(names, names[1:]):
+            assert order.index(cur) == (order.index(prev) + 1) % 4
+
+
+class TestIllumination:
+
+    def test_full_moon_is_fully_lit(self):
+        assert moon.illumination_percent(_utc("2026-11-24 14:53")) > 99.5
+
+    def test_new_moon_is_dark(self):
+        assert moon.illumination_percent(_utc("2026-12-09 00:52")) < 0.5
+
+    def test_first_quarter_is_half_lit(self):
+        assert 48 <= moon.illumination_percent(_utc("2026-11-17 11:48")) <= 52
+
+
+class TestFetchData:
 
     def test_plugin_id(self, plugin):
         assert plugin.plugin_id == "moon_phase"
 
     def test_manifest_valid(self):
         manifest_path = Path(__file__).parent.parent / "manifest.json"
-        with open(manifest_path) as f:
-            m = json.load(f)
+        m = json.loads(manifest_path.read_text())
         for field in ("id", "name", "version"):
             assert field in m
 
-    @patch("plugins.moon_phase.requests.get")
-    def test_fetch_data_success(self, mock_get, configured_plugin):
-        mock_response = Mock()
-        mock_response.json.return_value = SAMPLE_RESPONSE
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+    def test_works_with_no_network(self, plugin):
+        """Regression: USNO read timeouts made the plugin show Unavailable."""
+        def refuse(*args, **kwargs):
+            raise OSError("network disabled in test")
 
-        result = configured_plugin.fetch_data()
+        with patch.object(socket.socket, "connect", refuse), \
+                patch.object(socket, "create_connection", refuse):
+            result = plugin.fetch_data()
 
         assert result.available is True
         assert result.error is None
-        assert result.data is not None
-        assert "phase" in result.data, "missing variable: phase"
-        assert "illumination" in result.data, "missing variable: illumination"
-        assert "next_full_moon" in result.data, "missing variable: next_full_moon"
 
-    @patch("plugins.moon_phase.requests.get")
-    @patch("plugins.moon_phase.datetime")
-    def test_phase_last_quarter_with_usno_utc_offset(self, mock_dt, mock_get, configured_plugin):
-        """Regression: issue #727 — USNO UTC date one day behind local date must still
-        report the quarter-phase name, not the between-phase name."""
-        import datetime as real_datetime
-        # Pin today to May 9, 2026 (the date in the bug report).
-        # SAMPLE_RESPONSE has Last Quarter on May 8 at 23:00 UT, which is May 9
-        # in many western timezones — the ±1-day tolerance must catch this.
-        mock_dt.date.today.return_value = real_datetime.date(2026, 5, 9)
-        mock_dt.date.side_effect = lambda *a, **kw: real_datetime.date(*a, **kw)
-        mock_dt.timedelta = real_datetime.timedelta
+    def test_returns_all_variables(self, plugin):
+        result = _fetch_on(plugin, datetime.date(2026, 11, 26))
+        assert set(result.data) == {"phase", "illumination", "next_full_moon"}
 
-        mock_response = Mock()
-        mock_response.json.return_value = SAMPLE_RESPONSE
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
+    def test_between_phase_name(self, plugin):
+        assert _fetch_on(plugin, datetime.date(2026, 11, 26)).data["phase"] == "Waning Gibbous"
 
-        result = configured_plugin.fetch_data()
+    def test_quarter_name_on_event_day(self, plugin):
+        assert _fetch_on(plugin, datetime.date(2026, 11, 17)).data["phase"] == "First Quarter"
 
-        assert result.available is True
-        assert result.data["phase"] == "Last Quarter"
-        # cos formula: 22 days since New Moon Apr 17 → ~52%, close to real 51%
-        assert 45 <= result.data["illumination"] <= 55
-        assert result.data["next_full_moon"] == "2026-05-30"
+    def test_quarter_name_kept_one_day_after_ut_event(self, plugin):
+        """Issue #727: a UT event date can be a day behind the user's local date."""
+        assert _fetch_on(plugin, datetime.date(2026, 11, 25)).data["phase"] == "Full Moon"
 
-    @patch("plugins.moon_phase.requests.get")
-    def test_fetch_data_network_error(self, mock_get, configured_plugin):
-        import requests as req_mod
-        mock_get.side_effect = req_mod.exceptions.ConnectionError("network down")
+    def test_illumination_is_rounded_percent_at_current_moment(self, plugin):
+        result = _fetch_on(plugin, datetime.date(2026, 11, 24), hour=15)
+        assert result.data["illumination"] == 100
 
-        result = configured_plugin.fetch_data()
-
-        assert result.available is False
-        assert result.error is not None
-
-    @patch("plugins.moon_phase.requests.get")
-    def test_fetch_data_bad_json(self, mock_get, configured_plugin):
-        mock_response = Mock()
-        mock_response.json.side_effect = ValueError("bad json")
-        mock_response.raise_for_status = Mock()
-        mock_get.return_value = mock_response
-
-        result = configured_plugin.fetch_data()
-
-        assert result.available is False
-
-
-
-# Real USNO primary phases, 2026-09-04 .. 2026-12-30 (from
-# https://aa.usno.navy.mil/api/moon/phases/year?year=2026).
-_USNO_2026_PHASES = [
-    (9, 4, "Last Quarter"), (9, 11, "New Moon"), (9, 18, "First Quarter"),
-    (9, 26, "Full Moon"), (10, 3, "Last Quarter"), (10, 10, "New Moon"),
-    (10, 18, "First Quarter"), (10, 26, "Full Moon"), (11, 1, "Last Quarter"),
-    (11, 9, "New Moon"), (11, 17, "First Quarter"), (11, 24, "Full Moon"),
-    (12, 1, "Last Quarter"), (12, 9, "New Moon"), (12, 17, "First Quarter"),
-    (12, 24, "Full Moon"), (12, 30, "Last Quarter"),
-]
-
-
-def _fake_usno_get(url, params, **kwargs):
-    """Answer like USNO's /phases/date: the first `nump` phases on or after `date`."""
-    import datetime as real_datetime
-    start = real_datetime.date.fromisoformat(params["date"])
-    entries = [
-        {"phase": name, "year": 2026, "month": m, "day": d, "time": "12:00"}
-        for m, d, name in _USNO_2026_PHASES
-        if real_datetime.date(2026, m, d) >= start
-    ][: params["nump"]]
-    response = Mock()
-    response.json.return_value = {"phasedata": entries}
-    response.raise_for_status = Mock()
-    return response
-
-
-def _fetch_on(plugin, day):
-    import datetime as real_datetime
-    with patch("plugins.moon_phase.requests.get", side_effect=_fake_usno_get), \
-            patch("plugins.moon_phase.datetime") as mock_dt:
-        mock_dt.date.today.return_value = day
-        mock_dt.date.side_effect = lambda *a, **kw: real_datetime.date(*a, **kw)
-        mock_dt.timedelta = real_datetime.timedelta
-        return plugin.fetch_data()
-
-
-class TestNextFullMoon:
-
-    def test_next_full_moon_found_two_days_after_full_moon(self, configured_plugin):
-        """Regression: two days after the 2026-11-24 Full Moon the API window
-        ended before the next Full Moon, so next_full_moon came back blank."""
-        import datetime as real_datetime
-        result = _fetch_on(configured_plugin, real_datetime.date(2026, 11, 26))
-
-        assert result.available is True
+    def test_next_full_moon_two_days_after_full_moon(self, plugin):
+        result = _fetch_on(plugin, datetime.date(2026, 11, 26))
         assert result.data["next_full_moon"] == "2026-12-24"
 
-    def test_next_full_moon_never_blank_across_a_lunar_cycle(self, configured_plugin):
-        import datetime as real_datetime
-        first = real_datetime.date(2026, 10, 26)
+    def test_next_full_moon_never_blank_across_a_lunar_cycle(self, plugin):
+        first = datetime.date(2026, 10, 26)
         for offset in range(30):
-            day = first + real_datetime.timedelta(days=offset)
-            result = _fetch_on(configured_plugin, day)
-            next_full = result.data["next_full_moon"]
-            assert next_full, f"next_full_moon blank on {day}"
-            assert real_datetime.date.fromisoformat(next_full) > day
+            day = first + datetime.timedelta(days=offset)
+            next_full = _fetch_on(plugin, day).data["next_full_moon"]
+            assert datetime.date.fromisoformat(next_full) > day, f"bad next_full_moon on {day}"
+
+    def test_unexpected_error_reports_unavailable(self, plugin):
+        with patch.object(moon, "phase_events", side_effect=RuntimeError("boom")):
+            result = plugin.fetch_data()
+        assert result.available is False
+        assert result.error == "boom"
